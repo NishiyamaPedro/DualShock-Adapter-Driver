@@ -43,7 +43,7 @@ static const int gamepad_buttons[] = {
 
 struct sanwa_adapter {
 	struct input_dev *port_one;
-	struct input_dev *port_two;	
+	struct input_dev *port_two;
 };
 
 struct sanwa_input_report {
@@ -69,14 +69,23 @@ static struct input_dev *sanwa_allocate_input_dev(struct hid_device *hdev, const
 	input_dev->id.vendor = hdev->vendor;
 	input_dev->id.product = hdev->product;
 	input_dev->id.version = hdev->version;
-	input_dev->uniq = hdev->uniq;
 	
 	input_dev->name = devm_kasprintf(&hdev->dev, GFP_KERNEL, "%s %s", hdev->name, sfx);
 	if (!input_dev->name)
 		return ERR_PTR(-ENOMEM);
 	
+	input_dev->phys = devm_kasprintf(&hdev->dev, GFP_KERNEL, "%s", hdev->phys);
+	if (!input_dev->phys)
+		return ERR_PTR(-ENOMEM);
+
 	input_set_drvdata(input_dev, hdev);
 	return input_dev;
+}
+
+static int sanwa_ff_play(struct input_dev *dev, void *data, struct ff_effect *effect)
+{
+	//	TO-DO
+	return 0;
 }
 
 static void sanwa_set_capabilities(struct input_dev *port)
@@ -93,6 +102,9 @@ static void sanwa_set_capabilities(struct input_dev *port)
 
 	for (i = 0; i < ARRAY_SIZE(gamepad_buttons); i++)
 		input_set_capability(port, EV_KEY, gamepad_buttons[i]);
+
+	input_set_capability(port, EV_FF, FF_RUMBLE);
+	input_ff_create_memless(port, NULL, sanwa_ff_play);
 }
 
 static int sanwa_create_inputs(struct hid_device *hdev)
@@ -168,9 +180,6 @@ static int sanwa_raw_event(struct hid_device *hdev, struct hid_report *report, u
 	uint8_t value;
 	
 	if (report->id == 1)
-		hid_info(hdev, "%u", sa_report->buttons[0]);
-
-	if (report->id == 1)
 		gamepad = sa->port_one;
 	else if (report->id == 2)
 		gamepad = sa->port_two;
@@ -187,11 +196,24 @@ static int sanwa_raw_event(struct hid_device *hdev, struct hid_report *report, u
 		input_report_abs(gamepad, ABS_HAT0X, sanwa_gamepad_hat_mapping[value].x);
 		input_report_abs(gamepad, ABS_HAT0Y, sanwa_gamepad_hat_mapping[value].y);
 
-		input_report_key(gamepad, BTN_WEST,   sa_report->buttons[0] & BUTTONS0_SQUARE);
-		input_report_key(gamepad, BTN_SOUTH,  sa_report->buttons[0] & BUTTONS0_CROSS);
-		input_report_key(gamepad, BTN_EAST,   sa_report->buttons[0] & BUTTONS0_CIRCLE);
-		input_report_key(gamepad, BTN_NORTH,  sa_report->buttons[0] & BUTTONS0_TRIANGLE);
+		// *************************
+		//  BTN_WEST and BTN_NORTH may appear swapped in some applications due to confusion with the button codes.
+		//  In input-event-codes.h they appear as the layout for Nintendo controllers. 
+		//  Strangely, the A and B buttons appear on the xbox layout.
+		// 
+		//  #define BTN_NORTH		0x133
+		//	#define BTN_X			BTN_NORTH
+		//	#define BTN_WEST		0x134
+		//	#define BTN_Y			BTN_WEST
+		//
+		//  I decide to use them swapped since in most cases they are treated as the xbox layout.
+		input_report_key(gamepad, BTN_X,   	  sa_report->buttons[0] & BUTTONS0_SQUARE);
+		input_report_key(gamepad, BTN_Y,  	  sa_report->buttons[0] & BUTTONS0_TRIANGLE);
+		// *************************
 
+		input_report_key(gamepad, BTN_A,	  sa_report->buttons[0] & BUTTONS0_CROSS);
+		input_report_key(gamepad, BTN_B,	  sa_report->buttons[0] & BUTTONS0_CIRCLE);
+		
 		input_report_key(gamepad, BTN_TL,     sa_report->buttons[1] & BUTTONS1_L1);
 		input_report_key(gamepad, BTN_TR,     sa_report->buttons[1] & BUTTONS1_R1);
 		input_report_key(gamepad, BTN_TL2,    sa_report->buttons[1] & BUTTONS1_L2);
