@@ -47,7 +47,7 @@ struct sanwa_adapter {
 };
 
 struct sanwa_input_report {
-	uint8_t rz, z; // Right Y and X axis
+	uint8_t ry, rx; // Right Y and X axis
 	uint8_t x, y; // Left X and Y axis
 	uint8_t buttons[3]; 
 };
@@ -94,8 +94,8 @@ static void sanwa_set_capabilities(struct input_dev *port)
 
 	input_set_abs_params(port, ABS_X, 0, 255, 0, 0);
 	input_set_abs_params(port, ABS_Y, 0, 255, 0, 0);
-	input_set_abs_params(port, ABS_Z, 0, 255, 0, 0);
-	input_set_abs_params(port, ABS_RZ, 0, 255, 0, 0);
+	input_set_abs_params(port, ABS_RX, 0, 255, 0, 0);
+	input_set_abs_params(port, ABS_RY, 0, 255, 0, 0);
 
 	input_set_abs_params(port, ABS_HAT0X, -1, 1, 0, 0);
 	input_set_abs_params(port, ABS_HAT0Y, -1, 1, 0, 0);
@@ -187,8 +187,8 @@ static int sanwa_raw_event(struct hid_device *hdev, struct hid_report *report, u
 	if (gamepad) {
 		input_report_abs(gamepad, ABS_X,  sa_report->x);
 		input_report_abs(gamepad, ABS_Y,  sa_report->y);
-		input_report_abs(gamepad, ABS_Z,  sa_report->z);
-		input_report_abs(gamepad, ABS_RZ, sa_report->rz);
+		input_report_abs(gamepad, ABS_RX,  sa_report->rx);
+		input_report_abs(gamepad, ABS_RY, sa_report->ry);
 		
 		value = sa_report->buttons[0] & BUTTONS0_HAT_SWITCH;
 		if (value >= ARRAY_SIZE(sanwa_gamepad_hat_mapping))
