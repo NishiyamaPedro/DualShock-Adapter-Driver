@@ -3,9 +3,6 @@
  * Copyright (c) 2021 Pedro Nishiyama <nishiyama.v3@gmail.com>
  * Based on hid-playstation driver
  *
- * TO-DO
- * - Implement Force Feedback
- *
  */
 
 #include <linux/input.h>
@@ -43,8 +40,12 @@ static const int gamepad_buttons[] = {
 
 struct sanwa_adapter
 {
-	struct input_dev *port_one;
-	struct input_dev *port_two;
+	struct input_dev *ports[2];
+};
+
+struct port_index
+{
+	unsigned int idx;
 };
 
 struct sanwa_input_report
@@ -86,12 +87,41 @@ static struct input_dev *sanwa_allocate_input_dev(struct hid_device *hdev, const
 
 static int sanwa_ff_play(struct input_dev *dev, void *data, struct ff_effect *effect)
 {
-	//	TO-DO
+	struct hid_device *hdev = input_get_drvdata(dev);
+	struct port_index *portidx = data;
+	struct hid_report *report = hdev->report_enum[HID_OUTPUT_REPORT].report_id_hash[portidx->idx];
+
+	int strong, weak;
+
+	strong = effect->u.rumble.strong_magnitude;
+	weak = effect->u.rumble.weak_magnitude;
+
+	report->field[0]->value[0] = 0x01;
+	report->field[1]->value[0] = 0x00;
+
+	if (strong || weak)
+	{
+		strong = strong * 0xff / 0xffff;
+		weak = weak * 0xff / 0xffff;
+
+		report->field[2]->value[0] = strong;
+		report->field[3]->value[0] = weak;
+	}
+	else
+	{
+		report->field[2]->value[0] = 0x00;
+		report->field[3]->value[0] = 0x00;
+	}
+
+	hid_hw_request(hdev, report, HID_REQ_SET_REPORT);
+
 	return 0;
 }
 
-static void sanwa_set_capabilities(struct input_dev *port)
+static int sanwa_set_capabilities(struct input_dev *port, int index)
 {
+	struct port_index *portidx;
+	int ret;
 	unsigned int i;
 
 	input_set_abs_params(port, ABS_X, 0, 255, 0, 0);
@@ -106,7 +136,21 @@ static void sanwa_set_capabilities(struct input_dev *port)
 		input_set_capability(port, EV_KEY, gamepad_buttons[i]);
 
 	input_set_capability(port, EV_FF, FF_RUMBLE);
-	input_ff_create_memless(port, NULL, sanwa_ff_play);
+
+	portidx = kzalloc(sizeof(*portidx), GFP_KERNEL);
+	if (!portidx)
+		return -ENOMEM;
+
+	portidx->idx = index;
+
+	ret = input_ff_create_memless(port, portidx, sanwa_ff_play);
+	if (ret)
+	{
+		kfree(portidx);
+		return ret;
+	}
+
+	return 0;
 }
 
 static int sanwa_create_inputs(struct hid_device *hdev)
@@ -116,23 +160,29 @@ static int sanwa_create_inputs(struct hid_device *hdev)
 
 	sa = devm_kzalloc(&hdev->dev, sizeof(*sa), GFP_KERNEL);
 	if (!sa)
-		return 1;
-
-	hid_set_drvdata(hdev, sa);
+		return -ENOMEM;
 
 	hid_info(hdev, "creating port 1\n");
-	sa->port_one = sanwa_allocate_input_dev(hdev, "Port 1");
-	sanwa_set_capabilities(sa->port_one);
-	ret = input_register_device(sa->port_one);
+	sa->ports[0] = sanwa_allocate_input_dev(hdev, "Port 1");
+	ret = sanwa_set_capabilities(sa->ports[0], 1);
+	if (ret)
+		return ret;
+
+	ret = input_register_device(sa->ports[0]);
 	if (ret)
 		return ret;
 
 	hid_info(hdev, "creating port 2\n");
-	sa->port_two = sanwa_allocate_input_dev(hdev, "Port 2");
-	sanwa_set_capabilities(sa->port_two);
-	ret = input_register_device(sa->port_two);
+	sa->ports[1] = sanwa_allocate_input_dev(hdev, "Port 2");
+	ret = sanwa_set_capabilities(sa->ports[1], 2);
 	if (ret)
 		return ret;
+
+	ret = input_register_device(sa->ports[1]);
+	if (ret)
+		return ret;
+
+	hid_set_drvdata(hdev, sa);
 
 	return 0;
 }
@@ -178,6 +228,12 @@ err_stop:
 	return ret;
 }
 
+static void sanwa_remove(struct hid_device *hdev)
+{
+	hid_hw_close(hdev);
+	hid_hw_stop(hdev);
+}
+
 static int sanwa_raw_event(struct hid_device *hdev, struct hid_report *report, u8 *data, int size)
 {
 	struct sanwa_adapter *sa = hid_get_drvdata(hdev);
@@ -185,10 +241,7 @@ static int sanwa_raw_event(struct hid_device *hdev, struct hid_report *report, u
 	struct input_dev *gamepad;
 	uint8_t value;
 
-	if (report->id == 1)
-		gamepad = sa->port_one;
-	else if (report->id == 2)
-		gamepad = sa->port_two;
+	gamepad = sa->ports[report->id - 1];
 
 	if (gamepad)
 	{
@@ -233,6 +286,7 @@ static struct hid_driver sanwa_driver = {
 	.name = "sanwa",
 	.id_table = sanwa_devices,
 	.probe = sanwa_probe,
+	.remove = sanwa_remove,
 	.raw_event = sanwa_raw_event,
 };
 module_hid_driver(sanwa_driver);
